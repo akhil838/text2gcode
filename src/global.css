@@ -1,0 +1,9 @@
+/* The app is a full-window canvas with floating panels; the document itself never scrolls. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
