@@ -112,24 +112,18 @@ function isTyping(target: EventTarget | null) {
 
 const saved = loadState();
 
-/** Bundled font paths already installed in this browser (JSON array). */
-const SEEDED_KEY = "ttf2hershey.bundledFonts";
-/** Flag-only seeding record: when set, these five bundled fonts count as already installed. */
-const LEGACY_SEEDED_KEY = "ttf2hershey.bundledFontsInstalled";
-const LEGACY_BUNDLE = ["Caveat.ttf", "IndieFlower-Regular.ttf", "PatrickHand-Regular.ttf", "Kalam-Regular.ttf", "Gurajada-Regular.ttf"];
-let seeding: Promise<void> | null = null;
+let seeding: Promise<boolean> | null = null;
 
 /**
- * Install bundled fonts this browser has not installed yet, so fonts added to the bundle later
- * still arrive while a font the user removed stays removed. Returns null when there is nothing
- * to install. Shared promise: React StrictMode runs effects twice.
+ * Install every bundled font missing from this browser's font store (first launch, or after
+ * site data was cleared). Bundled fonts cannot be removed, so the store itself is the record.
+ * Resolves true when something was installed. Shared promise: React StrictMode runs effects twice.
  */
-function seedBundledFonts(): Promise<void> | null {
-  const installed = new Set<string>(JSON.parse(localStorage.getItem(SEEDED_KEY) ?? "[]"));
-  if (localStorage.getItem(LEGACY_SEEDED_KEY)) LEGACY_BUNDLE.forEach((p) => installed.add(p));
-  const missing = BUNDLED_FONTS.filter((f) => !installed.has(f.path));
-  if (!missing.length) return null;
+function seedBundledFonts(): Promise<boolean> {
   seeding ??= (async () => {
+    const present = new Set((await api.listFonts()).map((f) => f.filename));
+    const missing = BUNDLED_FONTS.filter((f) => !present.has(f.path.split("/").pop()!));
+    if (!missing.length) return false;
     const files = await Promise.all(
       missing.map(async ({ path }) => {
         const res = await fetch(fontAsset(path));
@@ -141,9 +135,7 @@ function seedBundledFonts(): Promise<void> | null {
       files,
       missing.map((f) => f.name),
     );
-    missing.forEach((f) => installed.add(f.path));
-    localStorage.setItem(SEEDED_KEY, JSON.stringify([...installed]));
-    localStorage.removeItem(LEGACY_SEEDED_KEY);
+    return true;
   })();
   return seeding;
 }
@@ -228,13 +220,16 @@ export function App() {
     }
   }, []);
 
-  // First launch in this browser: install the bundled fonts, then start the page with a sample box.
+  // Install missing bundled fonts, then give an empty page a sample box.
   useEffect(() => {
-    (seedBundledFonts() ?? Promise.resolve())
-      .catch((err) => errorToast("Could not install the bundled fonts", err))
-      .then(() => refreshFonts())
-      .then((list) => {
-        if (saved || !list?.length) return;
+    seedBundledFonts()
+      .catch((err) => {
+        errorToast("Could not install the bundled fonts", err);
+        return false;
+      })
+      .then(async (installed) => {
+        const list = await refreshFonts();
+        if (!list.length || (saved?.boxes.length && !installed)) return;
         const sample = newBox(list[0].id, SAMPLE_TEXT.ascii, 30, 30, 10);
         pendingSnap.current.add(sample.id);
         setBoxes((b) => (b.length ? b : [sample]), { replace: true });
@@ -492,7 +487,7 @@ export function App() {
       fonts={fonts}
       value={highlightedFontId}
       missing={fontMissing}
-      uploading={uploading}
+      uploading={uploading || fontsLoading}
       hint={
         selectedBoxes.length > 1
           ? `Applies to the ${selectedBoxes.length} selected text boxes.`

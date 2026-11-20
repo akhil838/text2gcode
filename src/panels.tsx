@@ -54,7 +54,7 @@ export function FontField({ fonts, value, missing, hint, uploading, onChange, on
     <Stack gap={4}>
         <Select
           label="Font"
-          placeholder={missing ? "font was removed, pick another" : fonts.length ? "pick a font" : "upload a font to start"}
+          placeholder={missing ? "font was removed, pick another" : fonts.length ? "pick a font" : uploading ? "installing fonts…" : "upload a font to start"}
           error={missing ? "font no longer available" : undefined}
           value={missing ? null : value}
           searchable
