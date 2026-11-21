@@ -236,3 +236,5 @@ self.onmessage = async (e: MessageEvent<{ id: number; method: keyof Handlers; ar
     self.postMessage({ id, error: err instanceof Error ? err.message : String(err) });
   }
 };
+// Tell the page the handler is installed; it holds its calls until then (see api.ts).
+self.postMessage({ ready: true });

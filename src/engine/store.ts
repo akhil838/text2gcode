@@ -23,8 +23,7 @@ const DB_NAME = "ttf2hershey";
 let dbPromise: Promise<IDBDatabase> | null = null;
 
 function db(): Promise<IDBDatabase> {
-  if (!dbPromise) {
-    const { promise, resolve, reject } = Promise.withResolvers<IDBDatabase>();
+  dbPromise ??= new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, 1);
     req.onupgradeneeded = () => {
       const d = req.result;
@@ -33,19 +32,18 @@ function db(): Promise<IDBDatabase> {
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
-    dbPromise = promise;
-  }
+  });
   return dbPromise;
 }
 
 async function run<T>(store: "fonts" | "sheets", mode: IDBTransactionMode, op: (s: IDBObjectStore) => IDBRequest): Promise<T> {
   const d = await db();
-  const { promise, resolve, reject } = Promise.withResolvers<T>();
-  const tx = d.transaction(store, mode);
-  const req = op(tx.objectStore(store));
-  tx.oncomplete = () => resolve(req.result as T);
-  tx.onerror = () => reject(tx.error);
-  return promise;
+  return new Promise<T>((resolve, reject) => {
+    const tx = d.transaction(store, mode);
+    const req = op(tx.objectStore(store));
+    tx.oncomplete = () => resolve(req.result as T);
+    tx.onerror = () => reject(tx.error);
+  });
 }
 
 export const store = {

@@ -84,24 +84,47 @@ export interface PageExport {
 const worker = new Worker(new URL("./engine/worker.ts", import.meta.url), { type: "module" });
 const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
 let nextId = 0;
-worker.onmessage = (e: MessageEvent<{ id: number; result?: unknown; error?: string }>) => {
+/** Set when the worker failed to load or crashed: every call then rejects with this error. */
+let workerFailure: Error | null = null;
+/**
+ * Calls wait here until the worker reports it has loaded: WebKit delivers messages to a module
+ * worker still awaiting its imports (the HarfBuzz WebAssembly), where they would be lost.
+ */
+let queue: unknown[] | null = [];
+worker.onmessage = (e: MessageEvent<{ ready?: true; id: number; result?: unknown; error?: string }>) => {
+  if (e.data.ready) {
+    for (const msg of queue ?? []) worker.postMessage(msg);
+    queue = null;
+    return;
+  }
   const p = pending.get(e.data.id);
   if (!p) return;
   pending.delete(e.data.id);
   if (e.data.error !== undefined) p.reject(new Error(e.data.error));
   else p.resolve(e.data.result);
 };
+// A worker that fails to load or throws outside a call never answers; fail its calls instead of waiting forever.
+worker.onerror = (e: ErrorEvent) => {
+  e.preventDefault();
+  workerFailure = new Error(`The font engine stopped: ${e.message || "it could not start in this browser"}`);
+  for (const p of pending.values()) p.reject(workerFailure);
+  pending.clear();
+};
 
 /** Call a worker method. An aborted signal rejects with AbortError (the worker still finishes). */
 function call<K extends keyof Handlers>(method: K, args: Parameters<Handlers[K]>, signal?: AbortSignal): ReturnType<Handlers[K]> {
-  const { promise, resolve, reject } = Promise.withResolvers<unknown>();
-  const id = ++nextId;
-  pending.set(id, { resolve, reject });
-  signal?.addEventListener("abort", () => {
-    pending.delete(id);
-    reject(new DOMException("Aborted", "AbortError"));
+  const promise = new Promise<unknown>((resolve, reject) => {
+    if (workerFailure) return reject(workerFailure);
+    const id = ++nextId;
+    pending.set(id, { resolve, reject });
+    signal?.addEventListener("abort", () => {
+      pending.delete(id);
+      reject(new DOMException("Aborted", "AbortError"));
+    });
+    const msg = { id, method, args };
+    if (queue) queue.push(msg);
+    else worker.postMessage(msg);
   });
-  worker.postMessage({ id, method, args });
   return promise as ReturnType<Handlers[K]>;
 }
 
